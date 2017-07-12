@@ -179,6 +179,7 @@ class NetworkComponents {
             0: 0, // 0 for not compressed
             networkId: this.networkId,
             owner: this.owner,
+            type: "remote", // TODO: This is WIP and a placeholder
             takeover: this.takeover,
             template: this.data.template,
             showTemplate: this.data.showRemoteTemplate,

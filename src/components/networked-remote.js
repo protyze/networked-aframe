@@ -40,7 +40,7 @@ AFRAME.registerComponent('networked-remote', {
 
   firstUpdate: function() {
     var entityData = this.el.firstUpdateData;
-    this.networkUpdate(entityData); // updates root element only
+    this.networkComponents.networkUpdate(entityData); // updates root element only
     this.waitForTemplateAndUpdateChildren();
   },
 

@@ -39,25 +39,15 @@ AFRAME.registerComponent('networked-share', {
     this.takeover = false;
   },
 
-  attachAndShowTemplate: function(template, show) {
-    // TODO: Find a proper way to get exactly the same
-    // settings as the owner currently has (every single property value)
-    // --> the default template systems doesn't make sense here
+  attachTemplate: function(template, show) {
+    // TODO: Find a proper way to do this
+    // The default template system doesn't make sense here:
+    // we don't wan't to attach anything as a child object,
+    // we wan't to create an exactly identical entity with the
+    // same networkId. So that they behave exactly the same.
 
-    /*if (this.templateEl) {
-      this.el.removeChild(this.templateEl);
-    }
-
-    if (!template) { return; }
-
-    if (show) {
-      var templateChild = document.createElement('a-entity');
-      templateChild.setAttribute('template', 'src:' + template);
-      templateChild.setAttribute('visible', show);
-
-      this.el.appendChild(templateChild);
-      this.templateEl = templateChild;
-    }*/
+    // Could we use mixins as templates here?
+    // Should we implement something like "componentsOnce"?
   },
 
   firstUpdate: function() {

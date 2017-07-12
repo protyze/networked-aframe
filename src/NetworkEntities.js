@@ -53,6 +53,10 @@ class NetworkEntities {
     };
 
     if (entityData.type && entityData.type == "share") {
+      // WIP
+      // TODO: How can we make sure, that networked-share
+      // gets ALL the same properties as the current owner?
+      // use mixins? Implement something like "componentsOnce"?
       entity.setAttribute('networked-share', networkData);
     } else {
       entity.setAttribute('networked-remote', networkData);
