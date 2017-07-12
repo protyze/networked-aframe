@@ -51,7 +51,13 @@ class NetworkEntities {
       networkId: entityData.networkId,
       components: components
     };
-    entity.setAttribute('networked-remote', networkData);
+
+    if (entityData.type && entityData.type == "share") {
+      entity.setAttribute('networked-share', networkData);
+    } else {
+      entity.setAttribute('networked-remote', networkData);
+    }
+
     entity.firstUpdateData = entityData;
   }
 

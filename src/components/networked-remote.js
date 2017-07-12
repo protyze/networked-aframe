@@ -10,12 +10,18 @@ AFRAME.registerComponent('networked-remote', {
   },
 
   init: function() {
+    this.networkComponents = new NetworkComponents(this.el, this.data);
+
     this.attachTemplate(this.data.template, this.data.showTemplate);
     this.attachLerp();
 
     if (this.el.firstUpdateData) {
       this.firstUpdate();
     }
+  },
+
+  update: function(oldData) {
+    this.networkComponents.setData(this.data);
   },
 
   attachTemplate: function(template, show) {
@@ -52,7 +58,7 @@ AFRAME.registerComponent('networked-remote', {
   },
 
   bindEvents: function() {
-    this.el.addEventListener('networkUpdate', this.networkUpdateHandler.bind(this));
+    this.el.addEventListener('networkUpdate', this.networkComponents.networkUpdateHandler.bind(this.networkComponents));
   },
 
   pause: function() {
@@ -60,118 +66,7 @@ AFRAME.registerComponent('networked-remote', {
   },
 
   unbindEvents: function() {
-    this.el.removeEventListener('networkUpdate', this.networkUpdateHandler.bind(this));
-  },
+    this.el.removeEventListener('networkUpdate', this.networkComponents.networkUpdateHandler);
+  }
 
-  networkUpdateHandler: function(data) {
-    var entityData = data.detail.entityData;
-    this.networkUpdate(entityData);
-  },
-
-  networkUpdate: function(entityData) {
-    if (entityData[0] == 1) {
-      entityData = this.decompressSyncData(entityData);
-    }
-
-    if (entityData.physics) {
-      this.updatePhysics(entityData.physics);
-    }
-
-    this.updateComponents(entityData.components);
-  },
-
-  updateComponents: function(components) {
-    for (var key in components) {
-      if (this.isSyncableComponent(key)) {
-        var data = components[key];
-        if (naf.utils.isChildSchemaKey(key)) {
-          var schema = naf.utils.keyToChildSchema(key);
-          var childEl = this.el.querySelector(schema.selector);
-          if (childEl) { // Is false when first called in init
-            if (schema.property) { childEl.setAttribute(schema.component, schema.property, data); }
-            else { childEl.setAttribute(schema.component, data); }
-          }
-        } else {
-          this.el.setAttribute(key, data);
-        }
-      }
-    }
-  },
-
-  updatePhysics: function(physics) {
-    if (physics) {
-      if (NAF.options.useLerp) {
-        NAF.physics.attachPhysicsLerp(this.el, physics);
-      } else {
-        NAF.physics.detachPhysicsLerp(this.el);
-        NAF.physics.updatePhysics(this.el, physics);
-      }
-    }
-  },
-
-  /**
-    Decompressed packet structure:
-    [
-      0: 0, // 0 for uncompressed
-      networkId: networkId,
-      owner: clientId,
-      parent: parentNetworkId,
-      template: template,
-      components: {
-        position: data,
-        scale: data,
-        .head|||visible: data
-      }
-    ]
-  */
-  decompressSyncData: function(compressed) {
-    var entityData = {};
-    entityData[0] = 1;
-    entityData.networkId = compressed[1];
-    entityData.owner = compressed[2];
-    entityData.parent = compressed[3];
-    entityData.template = compressed[4];
-
-    var compressedComps = compressed[5];
-    var components = this.decompressComponents(compressedComps);
-    entityData.components = components;
-
-    return entityData;
-  },
-
-  decompressComponents: function(compressed) {
-    var decompressed = {};
-    for (var i in compressed) {
-      var name;
-      var schemaComp = this.data.components[i];
-
-      if (typeof schemaComp === "string") {
-        name = schemaComp;
-      } else {
-        name = naf.utils.childSchemaToKey(schemaComp);
-      }
-      decompressed[name] = compressed[i];
-    }
-    return decompressed;
-  },
-
-  isSyncableComponent: function(key) {
-    if (naf.utils.isChildSchemaKey(key)) {
-      var schema = naf.utils.keyToChildSchema(key);
-      return this.hasThisChildSchema(schema);
-    } else {
-      return this.data.components.indexOf(key) != -1;
-    }
-  },
-
-  hasThisChildSchema: function(schema) {
-    var schemaComponents = this.data.components;
-    for (var i in schemaComponents) {
-      var localChildSchema = schemaComponents[i];
-      if (naf.utils.childSchemaEqual(localChildSchema, schema)) {
-        return true;
-      }
-    }
-    return false;
-  },
 });
