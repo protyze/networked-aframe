@@ -1,25 +1,24 @@
-var naf = require('../NafIndex');
-
-var EasyRtcInterface = require('../network_interfaces/EasyRtcInterface');
-var WebSocketEasyRtcInterface = require('../network_interfaces/WebSocketEasyRtcInterface');
+/* global AFRAME, NAF */
 
 AFRAME.registerComponent('networked-scene', {
   schema: {
+    serverURL: {default: '/'},
     app: {default: 'default'},
     room: {default: 'default'},
     connectOnLoad: {default: true},
-    signalURL: {default: '/'},
     onConnect: {default: 'onConnect'},
-    webrtc: {default: false},
-    webrtcAudio: {default: false},
-
+    adapter: {default: 'wseasyrtc'}, // See https://github.com/networked-aframe/networked-aframe#adapters for list of adapters
+    audio: {default: false}, // Only if adapter supports audio
+    video: {default: false}, // Only if adapter supports video
     debug: {default: false},
   },
 
   init: function() {
-    this.el.addEventListener('connect', this.connect.bind(this));
+    var el = this.el;
+    this.connect = this.connect.bind(this);
+    el.addEventListener('connect', this.connect);
     if (this.data.connectOnLoad) {
-      this.el.emit('connect', null, false);
+      el.emit('connect', null, false);
     }
   },
 
@@ -27,45 +26,40 @@ AFRAME.registerComponent('networked-scene', {
    * Connect to signalling server and begin connecting to other clients
    */
   connect: function () {
-    naf.log.setDebug(this.data.debug);
-    naf.log.write('Networked-Aframe Connecting...');
+    NAF.log.setDebug(this.data.debug);
+    NAF.log.write('Networked-Aframe Connecting...');
 
-    // easyrtc.enableDebug(true);
     this.checkDeprecatedProperties();
-    this.setupNetworkInterface();
+    this.setupNetworkAdapter();
 
     if (this.hasOnConnectFunction()) {
       this.callOnConnect();
     }
-    naf.connection.connect(this.data.app, this.data.room, this.data.webrtcAudio);
+    return NAF.connection.connect(this.data.serverURL, this.data.app, this.data.room, this.data.audio, this.data.video);
   },
 
   checkDeprecatedProperties: function() {
     // No current
   },
 
-  setupNetworkInterface: function() {
-    var networkInterface;
-    if (this.data.webrtc) {
-      var easyRtcInterface = new EasyRtcInterface(easyrtc);
-      easyRtcInterface.setSignalUrl(this.data.signalURL);
-      networkInterface = easyRtcInterface;
-    } else {
-      var websocketInterface = new WebSocketEasyRtcInterface(easyrtc);
-      websocketInterface.setSignalUrl(this.data.signalURL);
-      networkInterface = websocketInterface;
-      if (this.data.webrtcAudio) {
-        naf.log.error('networked-scene: webrtcAudio option will only be used if webrtc is set to true. webrtc is currently false');
-      }
-    }
-    naf.connection.setNetworkInterface(networkInterface);
+  setupNetworkAdapter: function() {
+    var adapterName = this.data.adapter;
+    var adapter = NAF.adapters.make(adapterName);
+    NAF.connection.setNetworkAdapter(adapter);
+    this.el.emit('adapter-ready', adapter, false);
   },
 
   hasOnConnectFunction: function() {
-    return this.data.onConnect != '' && window.hasOwnProperty(this.data.onConnect);
+    return this.data.onConnect != '' && window[this.data.onConnect];
   },
 
   callOnConnect: function() {
-    naf.connection.onLogin(window[this.data.onConnect]);
+    NAF.connection.onConnect(window[this.data.onConnect]);
+  },
+
+  remove: function() {
+    NAF.log.write('networked-scene disconnected');
+    this.el.removeEventListener('connect', this.connect);
+    NAF.connection.disconnect();
   }
 });

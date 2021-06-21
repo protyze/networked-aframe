@@ -1,5 +1,5 @@
-/* global assert, process, setup, suite, test */
-var aframe = require('aframe');
+/* global assert, setup, suite, test, teardown, sinon, THREE */
+require('aframe');
 var helpers = require('./helpers');
 var naf = require('../../src/NafIndex');
 
@@ -9,19 +9,27 @@ suite('networked', function() {
   var scene;
   var entity;
   var networked;
+  var networkedSystem;
 
   function initScene(done) {
-    var opts = {};
-    opts.entity = '<a-entity id="test-entity" networked="template:t1;showLocalTemplate:false;components:position,rotation" position="1 2 3" rotation="4 3 2"><a-box></a-box></a-entity>';
+    var opts = {
+      assets: [
+        "<template id='t1'><a-entity><a-entity class='template-child'></a-entity></a-entity></template>"
+      ],
+      entity: '<a-entity networked="template:#t1" position="1 2 3" rotation="4 3.5 2"><a-box></a-box></a-entity>'
+    };
     scene = helpers.sceneFactory(opts);
     naf.utils.whenEntityLoaded(scene, done);
   }
 
   setup(function(done) {
-    naf.options.compressSyncPackets = false;
+    naf.clientId = 'owner1';
+    naf.connection.setNetworkAdapter(new helpers.MockNetworkAdapter());
     initScene(function() {
-      entity = document.querySelector('#test-entity');
+      entity = document.querySelector('a-entity');
       networked = entity.components['networked'];
+      networkedSystem = scene.systems['networked'];
+      networked.data.networkId = '';
       done();
     });
   });
@@ -43,22 +51,32 @@ suite('networked', function() {
 
   suite('init', function() {
 
-    test('sets networkId', sinon.test(function() {
-      this.stub(networked, 'createNetworkId').returns('nid1');
+    test('sets networkId and element id', sinon.test(function() {
+      this.stub(naf.utils, 'createNetworkId').returns('nid1');
+
+      networked.el.id = ''
+      networked.init();
+
+      var result = networked.data.networkId;
+      assert.equal(result, 'nid1');
+      assert.equal(entity.id, 'naf-nid1');
+    }));
+
+    test('retains networkId after component update', sinon.test(function() {
+      this.stub(naf.utils, 'createNetworkId').returns('nid-after-load');
 
       networked.init();
 
-      var result = networked.networkId;
-      assert.equal(result, 'nid1');
+      // A-Frame can call updateComponents for mulitple reasons. This can result in component data being rebuilt.
+      entity.updateComponents();
+      assert.equal(networked.data.networkId, 'nid-after-load');
     }));
 
     test('sets owner', sinon.test(function() {
-      naf.clientId = 'owner1';
-
       networked.init();
       document.body.dispatchEvent(new Event('loggedIn'));
 
-      var result = networked.owner;
+      var result = networked.data.owner;
       assert.equal(result, 'owner1');
     }));
 
@@ -74,105 +92,35 @@ suite('networked', function() {
 
     test('registers entity', sinon.test(function() {
       var networkId = 'nid2';
-      this.stub(networked, 'createNetworkId').returns(networkId);
-      var stub = this.stub(naf.entities, 'registerLocalEntity');
+      this.stub(naf.utils, 'createNetworkId').returns(networkId);
+      var stub = this.stub(naf.entities, 'registerEntity');
 
       networked.init();
 
       assert.isTrue(stub.calledWith('nid2', entity));
     }));
 
-    test('attaches template', function() {
-      var templateChild = entity.querySelector('[template]');
-      var result = templateChild.getAttribute('template');
-
-      assert.equal(result, 'src:t1');
+    test('attaches local template', function() {
+      var templateChild = entity.querySelector('.template-child');
+      assert.isOk(templateChild);
     });
-  });
-
-  suite('bindEvents', function() {
-
-    test('binds sync and sync all', sinon.test(function() {
-      this.spy(entity, 'addEventListener');
-
-      networked.bindEvents();
-
-      assert.isTrue(entity.addEventListener.calledWith('sync'), 'sync');
-      assert.isTrue(entity.addEventListener.calledWith('syncAll'), 'syncAll');
-      assert.isTrue(entity.addEventListener.calledTwice, 'called twice');
-    }));
-  });
-
-  suite('unbindEvents', function() {
-
-    test('unbinds sync and syncAll', sinon.test(function() {
-      this.spy(entity, 'removeEventListener');
-
-      networked.unbindEvents();
-
-      assert.isTrue(entity.removeEventListener.calledWith('sync'), 'sync');
-      assert.isTrue(entity.removeEventListener.calledWith('syncAll'), 'syncAll');
-      assert.isTrue(entity.removeEventListener.calledTwice, 'called twice');
-    }));
-  });
-
-  suite('createNetworkId', function() {
-
-    test('length', function() {
-      var id = networked.createNetworkId();
-      assert.equal(id.length, 7);
-    });
-
-    test('object type', function() {
-      var id = networked.createNetworkId();
-      assert.isString(id)
-    });
-
-    test('alphanumeric', function () {
-      var regex = /^[a-z0-9]+$/i;
-
-      var id = networked.createNetworkId();
-
-      assert.match(id, regex);
-    });
-  });
-
-  suite('attachAndShowTemplate', function() {
-
-    test('shows template', sinon.test(function() {
-      networked.attachAndShowTemplate('temp', true);
-
-      var templateChild = entity.querySelector('[template]');
-      var result = templateChild.components.visible.attrValue;
-
-      assert.isTrue(result);
-    }));
-
-    test('hides template', sinon.test(function() {
-      networked.attachAndShowTemplate('temp', false);
-
-      var templateChild = entity.querySelector('[template]');
-      var result = templateChild.components.visible.attrValue;
-      
-      assert.isFalse(result);
-    }));
   });
 
   suite('tick', function() {
 
     test('syncs if need to', sinon.test(function() {
-      this.stub(naf.utils, 'now').returns(4);
       this.stub(networked, 'syncDirty');
-      networked.nextSyncTime = 4;
+      networkedSystem.el.clock.elapsedTime = 4;
+      networkedSystem.nextSyncTime = 4;
 
-      networked.tick();
+      networkedSystem.tick();
 
       assert.isTrue(networked.syncDirty.calledOnce);
     }));
 
     test('does not sync if does not need to', sinon.test(function() {
-      this.stub(naf.utils, 'now').returns(3.9);
       this.stub(networked, 'syncDirty');
+      networked.el.sceneEl.clock.elapsedTime = 3.9;
       networked.nextSyncTime = 4;
 
       networked.tick();
@@ -184,18 +132,22 @@ suite('networked', function() {
   suite('syncAll', function() {
 
     test('broadcasts uncompressed data', sinon.test(function() {
-      this.stub(networked, 'createNetworkId').returns('network1');
+      this.stub(naf.utils, 'createNetworkId').returns('network1');
       this.stub(naf.connection, 'broadcastDataGuaranteed');
+
       var expected = {
-        0: 0,
         networkId: 'network1',
         owner: 'owner1',
+        creator: 'owner1',
+        lastOwnerTime: -1,
+        template: '#t1',
+        persistent: false,
         parent: null,
-        template: 't1',
         components: {
-          position: { x: 1, y: 2, z: 3 },
-          rotation: { x: 4, y: 3, z: 2 }
-        }
+          0: new THREE.Vector3(1, 2, 3),
+          1: { x: 4, y: 3.5, z: 2 }
+        },
+        isFirstSync: false
       };
 
       networked.init();
@@ -205,119 +157,82 @@ suite('networked', function() {
       var called = naf.connection.broadcastDataGuaranteed.calledWithExactly('u', expected);
       assert.isTrue(called);
     }));
-
-    test('updates cache', sinon.test(function() {
-      var oldData = {
-        position: { x: 1, y: 2, z: 5 /* changed */ },
-        rotation: { x: 4, y: 2 /* changed */, z: 2 }
-      };
-      networked.updateCache(oldData);
-      this.stub(naf.connection, 'broadcastDataGuaranteed');
-      this.spy(networked, 'updateCache');
-
-      networked.syncAll();
-
-      assert.isTrue(networked.updateCache.calledOnce);
-    }));
-
-    test('sets next sync time', sinon.test(function() {
-      this.stub(naf.connection, 'broadcastDataGuaranteed');
-      this.spy(networked, 'updateNextSyncTime');
-
-      networked.syncAll();
-
-      assert.isTrue(networked.updateNextSyncTime.calledOnce);
-    }));
   });
 
   suite('syncDirty', function() {
 
-    test('syncs uncompressed data that has changed', sinon.test(function() {
-      this.stub(networked, 'createNetworkId').returns('network1');
+    test('syncs data that has changed', sinon.test(function() {
+      this.stub(naf.utils, 'createNetworkId').returns('network1');
       this.stub(naf.connection, 'broadcastData');
-      var oldData = {
-        position: { x: 1, y: 2, z: 3 },
-        rotation: { x: 4, y: 2 /* changed */, z: 2 }
-      };
-      var expected = {
-        0: 0,
+
+      var expected = { d: [{
         networkId: 'network1',
+        creator: 'owner1',
         owner: 'owner1',
+        lastOwnerTime: -1,
+        persistent: false,
         parent: null,
-        template: 't1',
+        template: '#t1',
         components: {
-          rotation: { x: 4, y: 3, z: 2 }
-        }
-      };
+          1: { x: 9, y: 8, z: 7 }
+        },
+        isFirstSync: false
+      }] };
 
+      networkedSystem.init();
       networked.init();
-      networked.updateCache(oldData);
-      document.body.dispatchEvent(new Event('loggedIn'));
-      networked.syncDirty();
 
-      var called = naf.connection.broadcastData.calledWithExactly('u', expected);
-      assert.isTrue(called);
-    }));
+      // Force initial sync instead of waiting on onConnected
+      networked.syncAll();
 
-    test('syncs compressed data that has changed (all components changed)', sinon.test(function() {
-      this.stub(networked, 'createNetworkId').returns('network1');
-      this.stub(naf.connection, 'broadcastData');
-      naf.options.compressSyncPackets = true;
-      var oldData = {
-        position: { x: 1, y: 2, z: 5 /* changed */ },
-        rotation: { x: 4, y: 2 /* changed */, z: 2 }
-      };
-      var expected = [1, 'network1', 'owner1', null, 't1', { 0: { x: 1, y: 2, z: 3 }, 1: { x: 4, y: 3, z: 2 } }];
+      networked.el.setAttribute("rotation", { x: 9, y: 8, z: 7 });
 
-      networked.init();
-      networked.updateCache(oldData);
-      document.body.dispatchEvent(new Event('loggedIn'));
-      networked.syncDirty();
+      networkedSystem.el.clock.elapsedTime = 4;
+      networkedSystem.tick();
 
-      var called = naf.connection.broadcastData.calledWithExactly('u', expected);
-      assert.isTrue(called);
-    }));
-
-    test('syncs compressed data that has changed (some components changed)', sinon.test(function() {
-      this.stub(networked, 'createNetworkId').returns('network1');
-      this.stub(naf.connection, 'broadcastData');
-      naf.options.compressSyncPackets = true;
-      var oldData = {
-        position: { x: 1, y: 2, z: 3 },
-        rotation: { x: 4, y: 2 /* changed */, z: 2 }
-      };
-      var expected = [1, 'network1', 'owner1', null, 't1', { 1: { x: 4, y: 3, z: 2 } }];
-
-      networked.init();
-      networked.updateCache(oldData);
-      document.body.dispatchEvent(new Event('loggedIn'));
-      networked.syncDirty();
-
-      var called = naf.connection.broadcastData.calledWithExactly('u', expected);
-      assert.isTrue(called);
-    }));
-
-    test('updates cache', sinon.test(function() {
-      var oldData = {
-        position: { x: 1, y: 2, z: 5 /* changed */ },
-        rotation: { x: 4, y: 2 /* changed */, z: 2 }
-      };
-      networked.updateCache(oldData);
-      this.stub(naf.connection, 'broadcastData');
-      this.spy(networked, 'updateCache');
-
-      networked.syncDirty();
-
-      assert.isTrue(networked.updateCache.calledOnce);
+      var called = naf.connection.broadcastData.calledWithExactly('um', expected);
+      assert.isTrue(called, `called with ${JSON.stringify(naf.connection.broadcastData.getCall(0).args[1])}, expected ${JSON.stringify(expected)}`);
     }));
 
     test('sets next sync time', sinon.test(function() {
       this.stub(naf.connection, 'broadcastData');
-      this.spy(networked, 'updateNextSyncTime');
+      this.spy(networkedSystem, 'updateNextSyncTime');
 
-      networked.syncDirty();
+      networkedSystem.init();
+      networkedSystem.tick();
 
-      assert.isTrue(networked.updateNextSyncTime.calledOnce);
+      assert.isTrue(networkedSystem.updateNextSyncTime.calledOnce);
     }));
+  });
+
+  suite('gatherComponentsData', function() {
+    test('get position and rotation on full sync of root', function () {
+      var result = networked.gatherComponentsData(true);
+
+      var expected = {
+        0: new THREE.Vector3(1,2,3),
+        1: { x: 4, y: 3.5, z: 2 }
+      };
+
+      assert.deepEqual(result, expected);
+    });
+
+    test('get position and rotation on dirty sync of root', function () {
+
+      networked.cachedData = [
+        { x: 1, y: 2, z: 3 },
+        { x: 4, y: 3.5, z: 2 }
+      ];
+
+      networked.el.setAttribute("rotation", { x: 9, y: 8, z: 7 });
+
+      var result = networked.gatherComponentsData(false);
+
+      var expected = {
+        1: { x: 9, y: 8, z: 7 }
+      };
+
+      assert.deepEqual(result, expected);
+    });
   });
 });

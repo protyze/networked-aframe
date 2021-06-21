@@ -1,188 +1,228 @@
-var NetworkInterface = require('./network_interfaces/NetworkInterface');
+/* global NAF */
+var ReservedDataType = { Update: 'u', UpdateMulti: 'um', Remove: 'r' };
 
 class NetworkConnection {
 
   constructor(networkEntities) {
     this.entities = networkEntities;
-    this.setupDefaultDCSubs();
+    this.setupDefaultDataSubscriptions();
 
-    this.connectList = {};
-    this.dcIsActive = {};
-
-    this.loggedIn = false;
-    this.onLoggedInEvent = new Event('loggedIn');
-    this.onPeerConnectedEvent = new Event('clientConnected');
-    this.onPeerDisconnectedEvent = new Event('clientDisconnected');
-    this.onDCOpenEvent = new Event('dataChannelOpened');
-    this.onDCCloseEvent = new Event('dataChannelClosed');
+    this.connectedClients = {};
+    this.activeDataChannels = {};
   }
 
-  setNetworkInterface(network) {
-    this.network = network;
+  setNetworkAdapter(adapter) {
+    this.adapter = adapter;
   }
 
-  setupDefaultDCSubs() {
-    this.dcSubscribers = {
-      'u': this.entities.updateEntity.bind(this.entities),
-      'r': this.entities.removeRemoteEntity.bind(this.entities)
-    };
+  setupDefaultDataSubscriptions() {
+    this.dataChannelSubs = {};
+
+    this.dataChannelSubs[ReservedDataType.Update]
+        = this.entities.updateEntity.bind(this.entities);
+
+    this.dataChannelSubs[ReservedDataType.UpdateMulti]
+        = this.entities.updateEntityMulti.bind(this.entities);
+
+    this.dataChannelSubs[ReservedDataType.Remove]
+        = this.entities.removeRemoteEntity.bind(this.entities);
   }
 
-  connect(appId, roomId, enableAudio = false) {
-    NAF.app = appId;
-    NAF.room = roomId;
+  connect(serverUrl, appName, roomName, enableAudio = false, enableVideo = false) {
+    NAF.app = appName;
+    NAF.room = roomName;
 
-    var streamOptions = {
+    this.adapter.setServerUrl(serverUrl);
+    this.adapter.setApp(appName);
+    this.adapter.setRoom(roomName);
+
+    var webrtcOptions = {
       audio: enableAudio,
-      video: false,
+      video: enableVideo,
       datachannel: true
     };
-    this.network.setStreamOptions(streamOptions);
-    this.network.setDatachannelListeners(
-        this.dcOpenListener.bind(this),
-        this.dcCloseListener.bind(this),
-        this.receiveDataChannelMessage.bind(this)
+    this.adapter.setWebRtcOptions(webrtcOptions);
+
+    this.adapter.setServerConnectListeners(
+      this.connectSuccess.bind(this),
+      this.connectFailure.bind(this)
     );
-    this.network.setLoginListeners(
-        this.loginSuccess.bind(this),
-        this.loginFailure.bind(this)
+    this.adapter.setDataChannelListeners(
+      this.dataChannelOpen.bind(this),
+      this.dataChannelClosed.bind(this),
+      this.receivedData.bind(this)
     );
-    this.network.setRoomOccupantListener(this.occupantsReceived.bind(this));
-    this.network.joinRoom(roomId);
-    this.network.connect(appId);
+    this.adapter.setRoomOccupantListener(this.occupantsReceived.bind(this));
+
+    return this.adapter.connect();
   }
 
-  onLogin(callback) {
-    if (this.loggedIn) {
+  onConnect(callback) {
+    this.onConnectCallback = callback;
+
+    if (this.isConnected()) {
       callback();
     } else {
-      document.body.addEventListener('loggedIn', callback, false);
+      document.body.addEventListener('connected', callback, false);
     }
   }
 
-  loginSuccess(clientId) {
+  connectSuccess(clientId) {
     NAF.log.write('Networked-Aframe Client ID:', clientId);
     NAF.clientId = clientId;
-    this.loggedIn = true;
 
-    document.body.dispatchEvent(this.onLoggedInEvent);
+    var evt = new CustomEvent('connected', {'detail': { clientId: clientId }});
+    document.body.dispatchEvent(evt);
   }
 
-  loginFailure(errorCode, message) {
-    NAF.log.error(errorCode, "failure to login");
-    this.loggedIn = false;
+  connectFailure(errorCode, message) {
+    NAF.log.error(errorCode, "failure to connect");
   }
 
-  occupantsReceived(roomName, occupantList, isPrimary) {
-    this.checkForDisconnectingClients(this.connectList, occupantList);
-    this.connectList = occupantList;
+  occupantsReceived(occupantList) {
+    var prevConnectedClients = Object.assign({}, this.connectedClients);
+    this.connectedClients = occupantList;
+    this.checkForDisconnectingClients(prevConnectedClients, occupantList);
     this.checkForConnectingClients(occupantList);
   }
 
   checkForDisconnectingClients(oldOccupantList, newOccupantList) {
     for (var id in oldOccupantList) {
-      var clientFound = newOccupantList.hasOwnProperty(id);
+      var clientFound = newOccupantList[id];
       if (!clientFound) {
         NAF.log.write('Closing stream to ', id);
-        this.network.closeStreamConnection(id);
-        document.body.dispatchEvent(this.onPeerDisconnectedEvent);
+        this.adapter.closeStreamConnection(id);
       }
     }
   }
 
+  // Some adapters will handle this internally
   checkForConnectingClients(occupantList) {
     for (var id in occupantList) {
-      var startConnection = this.isNewClient(id) && this.network.shouldStartConnectionTo(occupantList[id]);
+      var startConnection = this.isNewClient(id) && this.adapter.shouldStartConnectionTo(occupantList[id]);
       if (startConnection) {
-        NAF.log.write('Opening stream to ', id);
-        this.network.startStreamConnection(id);
-        document.body.dispatchEvent(this.onPeerConnectedEvent);
+        NAF.log.write('Opening datachannel to ', id);
+        this.adapter.startStreamConnection(id);
       }
     }
+  }
+
+  getConnectedClients() {
+    return this.connectedClients;
   }
 
   isConnected() {
-    return this.loggedIn;
+    return !!NAF.clientId;
   }
 
-  isMineAndConnected(id) {
-    return NAF.clientId == id;
+  isMineAndConnected(clientId) {
+    return this.isConnected() && NAF.clientId === clientId;
   }
 
-  isNewClient(client) {
-    return !this.isConnectedTo(client);
+  isNewClient(clientId) {
+    return !this.isConnectedTo(clientId);
   }
 
-  isConnectedTo(client) {
-    return this.network.getConnectStatus(client) === NetworkInterface.IS_CONNECTED;
+  isConnectedTo(clientId) {
+    return this.adapter.getConnectStatus(clientId) === NAF.adapters.IS_CONNECTED;
   }
 
-  dcOpenListener(id) {
-    NAF.log.write('Opened data channel from ' + id);
-    this.dcIsActive[id] = true;
-    this.entities.completeSync();
-    document.body.dispatchEvent(this.onDCOpenEvent);
+  dataChannelOpen(clientId) {
+    NAF.log.write('Opened data channel from ' + clientId);
+    this.activeDataChannels[clientId] = true;
+    this.entities.completeSync(clientId, true);
+
+    var evt = new CustomEvent('clientConnected', {detail: {clientId: clientId}});
+    document.body.dispatchEvent(evt);
   }
 
-  dcCloseListener(id) {
-    NAF.log.write('Closed data channel from ' + id);
-    this.dcIsActive[id] = false;
-    this.entities.removeEntitiesFromUser(id);
-    document.body.dispatchEvent(this.onDCCloseEvent);
+  dataChannelClosed(clientId) {
+    NAF.log.write('Closed data channel from ' + clientId);
+    this.activeDataChannels[clientId] = false;
+    this.entities.removeEntitiesOfClient(clientId);
+
+    var evt = new CustomEvent('clientDisconnected', {detail: {clientId: clientId}});
+    document.body.dispatchEvent(evt);
   }
 
-  dcIsConnectedTo(user) {
-    return this.dcIsActive.hasOwnProperty(user) && this.dcIsActive[user];
+  hasActiveDataChannel(clientId) {
+    return !!this.activeDataChannels[clientId];
   }
 
-  broadcastData(dataType, data, guaranteed) {
-    for (var id in this.connectList) {
-      this.sendData(id, dataType, data, guaranteed);
-    }
+  broadcastData(dataType, data) {
+    this.adapter.broadcastData(dataType, data);
   }
 
   broadcastDataGuaranteed(dataType, data) {
-    this.broadcastData(dataType, data, true);
+    this.adapter.broadcastDataGuaranteed(dataType, data);
   }
 
-  sendData(toClient, dataType, data, guaranteed) {
-    if (this.dcIsConnectedTo(toClient)) {
+  sendData(toClientId, dataType, data, guaranteed) {
+    if (this.hasActiveDataChannel(toClientId)) {
       if (guaranteed) {
-        this.network.sendDataGuaranteed(toClient, dataType, data);
+        this.adapter.sendDataGuaranteed(toClientId, dataType, data);
       } else {
-        this.network.sendData(toClient, dataType, data);
+        this.adapter.sendData(toClientId, dataType, data);
       }
     } else {
       // console.error("NOT-CONNECTED", "not connected to " + toClient);
     }
   }
 
-  sendDataGuaranteed(toClient, dataType, data) {
-    this.sendData(toClient, dataType, data, true);
+  sendDataGuaranteed(toClientId, dataType, data) {
+    this.sendData(toClientId, dataType, data, true);
   }
 
   subscribeToDataChannel(dataType, callback) {
-    if (dataType == 'u' || dataType == 'r') {
+    if (this.isReservedDataType(dataType)) {
       NAF.log.error('NetworkConnection@subscribeToDataChannel: ' + dataType + ' is a reserved dataType. Choose another');
       return;
     }
-    this.dcSubscribers[dataType] = callback;
+    this.dataChannelSubs[dataType] = callback;
   }
 
-  unsubscribeFromDataChannel(dataType) {
-    if (dataType == 'u' || dataType == 'r') {
-      NAF.log.error('NetworkConnection@unsubscribeFromDataChannel: ' + dataType + ' is a reserved dataType. Choose another');
+  unsubscribeToDataChannel(dataType) {
+    if (this.isReservedDataType(dataType)) {
+      NAF.log.error('NetworkConnection@unsubscribeToDataChannel: ' + dataType + ' is a reserved dataType. Choose another');
       return;
     }
-    delete this.dcSubscribers[dataType];
+    delete this.dataChannelSubs[dataType];
   }
 
-  receiveDataChannelMessage(fromClient, dataType, data) {
-    if (this.dcSubscribers.hasOwnProperty(dataType)) {
-      this.dcSubscribers[dataType](fromClient, dataType, data);
+  isReservedDataType(dataType) {
+    return dataType == ReservedDataType.Update
+        || dataType == ReservedDataType.Remove;
+  }
+
+  receivedData(fromClientId, dataType, data, source) {
+    if (this.dataChannelSubs[dataType]) {
+      this.dataChannelSubs[dataType](fromClientId, dataType, data, source);
     } else {
-      NAF.log.error('NetworkConnection@receiveDataChannelMessage: ' + dataType + ' has not been subscribed to yet. Call subscribeToDataChannel()');
+      NAF.log.write('NetworkConnection@receivedData: ' + dataType + ' has not been subscribed to yet. Call subscribeToDataChannel()');
     }
+  }
+
+  getServerTime() {
+    return this.adapter.getServerTime();
+  }
+
+  disconnect() {
+    this.entities.removeRemoteEntities();
+
+    if (this.adapter) {
+      this.adapter.disconnect();
+    }
+
+    NAF.app = '';
+    NAF.room = '';
+    NAF.clientId = '';
+    this.connectedClients = {};
+    this.activeDataChannels = {};
+    this.adapter = null;
+
+    this.setupDefaultDataSubscriptions();
+
+    document.body.removeEventListener('connected', this.onConnectCallback);
   }
 }
 

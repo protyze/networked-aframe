@@ -4,10 +4,17 @@ module.exports = {
         path     : __dirname,
         filename : './dist/networked-aframe.js'
     },
+    mode: 'development',
     module : {
-        loaders: [ {
-                test   : /.js$/,
-                loader : 'babel-loader'
+        rules: [
+            {
+                test: /.js$/,
+                use: {
+                    loader: 'babel-loader',
+                    options: {
+                      presets: ['@babel/preset-env']
+                    }
+                }
             }
         ]
     }

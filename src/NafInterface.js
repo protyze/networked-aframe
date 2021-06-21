@@ -1,6 +1,8 @@
+/* global NAF */
+
 class NafInterface {
-  notImplemented() {
-    console.error('Interface method not implemented.');
+  notImplemented(name) {
+    NAF.log.error('Interface method not implemented:', name);
   }
 }
 module.exports = NafInterface;

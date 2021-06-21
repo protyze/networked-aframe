@@ -1,11 +1,11 @@
-/* global assert, process, setup, suite, test */
-var aframe = require('aframe');
+/* global assert, setup, suite, test, sinon, teardown */
+require('aframe');
 var helpers = require('./helpers');
 var naf = require('../../src/NafIndex');
 
 require('../../src/components/networked');
 
-suite('networked_WithParent', function() {
+suite('networked_withParent', function() {
   var scene;
   var entity;
   var networked;
@@ -13,8 +13,13 @@ suite('networked_WithParent', function() {
   var parentNetworked;
 
   function initScene(done) {
-    var opts = {};
-    opts.entity = '<a-entity id="test-parent" networked="template:t2"><a-entity id="test-entity" networked="template:t1;showLocalTemplate:false;" position="1 2 3" rotation="4 3 2"><a-box></a-box></a-entity></a-entity>';
+    var opts = {
+      assets: [
+        "<template id='t1'><a-entity></a-entity></template>",
+        "<template id='t2'><a-entity></a-entity></template>"
+      ],
+      entity: '<a-entity id="test-parent" networked="template:#t2"><a-entity id="test-entity" networked="template:#t1" position="1 2 3" rotation="4 3 2"><a-box></a-box></a-entity></a-entity>'
+    };
     scene = helpers.sceneFactory(opts);
     naf.utils.whenEntityLoaded(scene, done);
   }
@@ -25,7 +30,11 @@ suite('networked_WithParent', function() {
       parent = document.querySelector('#test-parent');
 
       networked = entity.components['networked'];
+      networked.data.networkId = '';
+
       parentNetworked = parent.components['networked'];
+      parentNetworked.data.networkId = '';
+
       done();
     });
   });
@@ -60,23 +69,23 @@ suite('networked_WithParent', function() {
 
   suite('syncAll', function() {
 
-    test('broadcasts uncompressed data with parent', sinon.test(function() {
-      this.stub(networked, 'createNetworkId').returns('network1');
-      this.stub(parentNetworked, 'createNetworkId').returns('parentId');
+    test('broadcasts data with parent', sinon.test(function() {
       this.stub(naf.connection, 'broadcastDataGuaranteed');
+
       var expected = {
-        0: 0,
         networkId: 'network1',
         owner: 'owner1',
+        lastOwnerTime: -1,
         parent: 'parentId',
-        template: 't1',
+        template: '#t1',
         components: {
-          position: { x: 1, y: 2, z: 3 },
-          rotation: { x: 4, y: 3, z: 2 }
+          0: { x: 1, y: 2, z: 3 },
+          1: { x: 4, y: 3, z: 2 }
         }
       };
-
+      var networkIdStub = this.stub(naf.utils, 'createNetworkId').returns('parentId');
       parentNetworked.init();
+      networkIdStub.returns('network1');
       networked.init();
       document.body.dispatchEvent(new Event('loggedIn'));
       networked.syncAll();
